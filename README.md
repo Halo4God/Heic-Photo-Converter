@@ -1,119 +1,93 @@
 # HEIC Converter
 
-A small Java desktop app that converts iPhone `.heic` / `.heif` photos to JPEG or PNG, one file or a whole folder at a time. It uses **FFmpeg** when it can find it (fast) and falls back to **ImageMagick** (slower, but works almost anywhere). Originals are never changed or overwritten.
+A fast, parallel HEIC batch converter for Windows, written in Java with a simple Swing GUI.
+It uses **FFmpeg** as the primary engine and automatically falls back to **ImageMagick** if FFmpeg isn't available.
 
-- Pick files or whole folders, choose JPEG or PNG, click Convert.
-- Converts several photos at once; you choose how many with the **Files at once** box.
-- Live progress bar, running timer, and a log that shows exactly why any file failed.
-- One bad file never stops the rest of the batch.
-- Portrait photos come out the right way up.
+## Features
+
+- **Batch conversion** of whole folders of `.heic` photos
+- **FFmpeg engine** (primary) with an **ImageMagick fallback** (`FallbackEngine`)
+- **Parallel processing** with an adjustable "Files at once" setting in the GUI
+- **Auto-detects FFmpeg** (`FfmpegLocator`), so it doesn't need to be on your PATH
+- **Unit tested** with JUnit (the conversion service is tested against a fake engine, so tests don't need real images or FFmpeg)
 
 ## Performance
 
-I measured instead of guessing. Test machine: AMD Ryzen 9 9900X (12 cores / 24 threads), Windows, FFmpeg 9.0.2 (gyan.dev "essentials" build).
+All numbers are from my own machine (Ryzen 9 9900X, 12 cores / 24 threads), with source files on spinning hard drives.
 
-**FFmpeg vs ImageMagick: 51 iPhone HEIC photos, same machine**
+### FFmpeg vs ImageMagick
 
-| Method                                            | Total time | Per photo |
-| ------------------------------------------------- | ---------- | --------- |
-| ImageMagick, one at a time                        | 28.1 s     | 0.55 s    |
-| FFmpeg, one at a time                             | 10.1 s     | 0.20 s    |
-| FFmpeg, 2 at once                                 | 6.0 s      | 0.12 s    |
-| FFmpeg, 4 at once                                 | 4.0 s      | 0.08 s    |
-| FFmpeg, 8 at once                                 | 3.1 s      | 0.06 s    |
-| FFmpeg with CUDA hardware decoding, one at a time | 32.6 s     | 0.64 s    |
+| Test      | FFmpeg | ImageMagick |
+| --------- | ------ | ----------- |
+| 51 images | ~10 s  | ~28 s       |
 
-**How many files at once? 400 photos on an SSD, each setting run twice**
+On a larger real-world run, **1,449 HEIC files converted in 99.6 s** with 11 files at once.
 
-| Files at once | Run 1  | Run 2  | Average | Photos per second |
-| ------------- | ------ | ------ | ------- | ----------------- |
-| 8             | 19.7 s | 18.9 s | 19.3 s  | 20.7              |
-| 11            | 17.9 s | 17.7 s | 17.8 s  | 22.5              |
-| 12            | 17.5 s | 17.4 s | 17.5 s  | 22.9              |
+### Thread count vs disk speed
 
-What I took from the numbers:
+To see how much the "Files at once" setting matters, I converted the same 400 files on two different SATA HDDs, three runs per setting (restarting between runs). Times are averages in seconds:
 
-- On the same 51 photos, FFmpeg running 8 at once was about **9x faster** than ImageMagick one at a time (28.1 s down to 3.1 s).
-- **GPU decoding was slower, not faster** (about 3x slower than plain CPU), so the app does not use it. iPhone HEICs are grids of many small HEVC tiles, and the cost of setting up GPU decoding and copying frames back is bigger than the decoding it saves.
-- Returns flatten around the number of physical cores. 12 at once was about 10% faster than 8, and only about 2% faster than 11.
-- On the 9900X the default of 11 is within about 2% of the best setting tested.
-- Windows was not restarted between runs, so recently read files may have been served from the OS file cache. That is why the second run of each setting is slightly faster.
+| Files at once | HDD 1  | HDD 2  |
+| ------------- | ------ | ------ |
+| 8             | 28.1 s | 43.7 s |
+| 11            | 31.0 s | 45.1 s |
+| 12            | 29.5 s | 45.6 s |
 
-The default for **Files at once** is half the logical processors minus one on machines with 8 or more (11 on a 24-thread CPU), and one less than the logical processors on smaller machines. Java can't tell physical cores from SMT threads, so this is a conservative guess. You can raise it in the app.
+**Takeaways**
+
+- **The drive matters far more than the thread count.** HDD 2 was about 55% slower than HDD 1 at every setting, and no change in thread count closed that gap.
+- **More threads didn't help on spinning disks.** 8 at once was as fast as or slightly faster than 11 or 12 on both drives, which points to the disk being the bottleneck rather than the CPU.
+- On a fast SSD you may well see different results, so the **Files at once** spinner is left adjustable. If your conversions are slow, try a lower value first when reading from an HDD.
+
+Your results will vary with CPU, disk speed, and file size.
 
 ## Requirements
 
-- Java 17 or newer
-- **FFmpeg** and/or **ImageMagick**. Either one is enough. With both installed, FFmpeg is tried first and ImageMagick takes over for any file FFmpeg can't convert.
-- Maven (only if you want to build the jar and run the tests from the command line)
+- Java 17+ (adjust to whatever you built with)
+- [FFmpeg](https://ffmpeg.org/download.html) (recommended): `ffmpeg.exe` on your PATH, or in a folder the app can find
+- [ImageMagick](https://imagemagick.org/) (optional): used as the fallback engine
 
-|                 | FFmpeg (recommended)         | ImageMagick (needs HEIC support)                                                     |
-| --------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
-| Windows         | `winget install Gyan.FFmpeg` | installer from imagemagick.org, tick "Add application directory to your system path" |
-| macOS           | `brew install ffmpeg`        | `brew install imagemagick`                                                           |
-| Ubuntu / Debian | `sudo apt install ffmpeg`    | `sudo apt install imagemagick libheif-plugin-libde265`                               |
+## Getting started
 
-Use a recent FFmpeg build. iPhone photos store the picture as a grid of tiles, and older FFmpeg builds can't put the tiles back together. I tested with FFmpeg 9.0.2. If FFmpeg fails on a file, the ImageMagick fallback handles it.
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/Halo4God/heic-converter.git
+   ```
+2. Import into Eclipse: **File > Import > Existing Projects into Workspace**
+3. Make sure FFmpeg is installed (see above).
+4. Run the main class (`heicconverter` package) and pick your source folder.
+5. Adjust **Files at once** if you want (see the performance notes above) and hit convert.
 
-**FFmpeg not on your PATH?** Point the app at it with a Java option or an environment variable:
+## Running the tests
 
-    java -Dffmpeg.path="C:\tools\ffmpeg\bin\ffmpeg.exe" -jar target/heic-converter-1.0.jar
+In Eclipse: right-click the project > **Run As > JUnit Test**.
 
-or set `FFMPEG_PATH` to the full path of `ffmpeg.exe`. The app checks `-Dffmpeg.path`, then `FFMPEG_PATH`, then the PATH.
+## Project layout
 
-## Run it
+```
+src/
+└── heicconverter/
+    ├── HeicConverter.java       # entry point / ImageMagick lookup
+    ├── ConversionService.java   # parallel batch conversion logic
+    ├── FfmpegEngine.java        # FFmpeg-based conversion
+    ├── FallbackEngine.java      # tries FFmpeg, falls back to ImageMagick
+    └── FfmpegLocator.java       # finds ffmpeg on the system
+test/
+└── heicconverter/
+    └── ConversionServiceTest.java
+    └── HeicConverterTest.java
+```
 
-With Maven:
+## Roadmap
 
-    mvn clean package
-    java -jar target/heic-converter-1.0.jar
+- [ ] Progress and error reporting improvements
+- [ ] Packaged installer / runnable JAR
+- [ ] Image speed tests on a variety of drives
 
-With just a JDK:
+## License
 
-    mkdir out
-    javac -d out src/main/java/heicconverter/*.java
-    java -cp out heicconverter.ConverterApp
+This project is licensed under the [MIT License] (LICENSE).
 
-In an IDE: import it as a Maven project and run `heicconverter.ConverterApp`. When it starts, the log says which engine is in use, for example `Using: FFmpeg (fallback: ImageMagick)`.
+## Author
 
-## How to use
-
-1. **Add Files...** to select one or many `.heic` files, or **Add Folder...** to queue every HEIC file directly inside a folder (subfolders are not scanned).
-2. Pick **JPEG** or **PNG**.
-3. Set **Files at once** (the default is a good starting point).
-4. Click **Convert**. Results go into a `converted` folder next to the originals. If a name already exists, the new file becomes `IMG_1 (1).jpg` instead of overwriting.
-5. Files that fail stay in the queue, and the log shows the reason.
-
-## How it works
-
-| Class               | Job                                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `ConversionEngine`  | Interface every converter implements: `convert(source, format)` and `name()`.                                                |
-| `FfmpegEngine`      | Converts one file by running FFmpeg (the fast path).                                                                         |
-| `HeicConverter`     | The ImageMagick engine, plus the shared helpers: finding HEIC files, building output paths, the `Result` record.             |
-| `FallBackEngine`    | Wraps two engines: tries the first, and if it fails on a file, tries the second. If both fail, the error shows both reasons. |
-| `FfmpegLocator`     | Finds a working FFmpeg (`-Dffmpeg.path`, then `FFMPEG_PATH`, then PATH).                                                     |
-| `ConversionService` | Converts a list of files on a fixed thread pool. Results come back in input order, and one failure never stops the batch.    |
-| `OutputFormat`      | JPG / PNG and the options each tool needs for them (quality settings differ between FFmpeg and ImageMagick).                 |
-| `ConverterApp`      | The Swing window. Conversion runs in a `SwingWorker`, so the window never freezes.                                           |
-
-Choices worth knowing:
-
-- Both tools are called through `ProcessBuilder`, so there are no extra Java libraries.
-- Output names are reserved the moment they are chosen (the empty file is created first), so two photos converting in parallel can never write to the same name.
-- FFmpeg is asked for exactly one frame per file, so photos that contain extra images (depth maps, thumbnails) don't create extra output.
-- Engines are small interchangeable classes behind one interface, so the service and the tests don't care which tool is doing the work.
-
-## Tests and CI
-
-- `HeicConverterTest` (JUnit 5) covers file detection, folder scanning, de-duplication, the output folder, and non-overwriting names.
-- `ConversionServiceTest` covers single and multiple files, and that one failed file doesn't stop the rest of the batch. It uses fake engines, so it needs neither FFmpeg nor ImageMagick.
-- Run everything with `mvn test`.
-- The `Jenkinsfile` builds, tests, and archives the jar.
-
-## Known limitations and ideas
-
-- Folder scanning goes one level deep.
-- FFmpeg or ImageMagick has to be installed separately.
-- Ideas: drag and drop, recursive folder scanning, a cancel button, a JPEG quality slider, EXIF handling options.
-- Cold-cache hard drive vs SSD benchmark coming soon.
+([@Halo4God](https://github.com/Halo4God))
